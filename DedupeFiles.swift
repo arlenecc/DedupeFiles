@@ -679,8 +679,10 @@ extension FileDedupe {
         }
         var exactRemoved: [(src: String, size: Int64)] = []
         var exactGroups: [[Int]] = []
+        var exactRepPaths = Set<String>()
         for (_, members) in byFP where members.count > 1 {
             let sorted = members.sorted { valid[$0].path < valid[$1].path }
+            exactRepPaths.insert(valid[sorted[0]].path)
             exactGroups.append(Array(sorted.dropFirst()))
             for m in sorted.dropFirst() { exactRemoved.append((valid[m].path, valid[m].size)) }
         }
@@ -722,11 +724,17 @@ extension FileDedupe {
 
         // 贪心保留：每个被删文档与代表直接相似；代表按字节覆盖量选取
         let sizesForGreedy = valid.map { $0.size }
-        let (keepers, removedFuzzy) = DDAlgo.greedyKeep(valid.count, dupPairs, sizes: sizesForGreedy)
-        // 移动边界二次校验：实际移动对 (被删, 代表) 的大小比若 ≥ sizeRatio，
-        // 改标「部分重复」二者均保留，保证大文件不被小代表误移。
+        let (keepersBase, removedFuzzy) = DDAlgo.greedyKeep(valid.count, dupPairs, sizes: sizesForGreedy)
+        var keepers = keepersBase
+        // 移动边界二次校验：
+        //  1) 第一道保留的代表不得被第二道再删除（否则整组文件都会离开原位）；
+        //  2) 实际移动对 (被删, 代表) 大小比 ≥ sizeRatio 时改标部分重复、二者均保留。
         var finalRemoved: [(Int, Int, Double)] = []
         for (dup, rep, sim) in removedFuzzy {
+            if exactRepPaths.contains(valid[dup].path) {
+                keepers.append(dup)
+                continue
+            }
             if options.sizeRatio > 0 {
                 let sd = max(valid[rep].size, 1)
                 let su = max(valid[dup].size, 1)
